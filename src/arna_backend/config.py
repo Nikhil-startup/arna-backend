@@ -8,7 +8,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "sb_publishable_3wAFaiAeBRNvaq4_3bJYww_
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 
-# Gmail SMTP Configuration
+# Email Dispatch (Resend HTTPS API & Gmail SMTP)
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+RESEND_FROM = os.getenv("RESEND_FROM", "ARNA Luxury Fashion <onboarding@resend.dev>")
 GMAIL_USER = os.getenv("GMAIL_USER", "")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
 
@@ -17,3 +19,4 @@ TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "")
 FAST2SMS_API_KEY = os.getenv("FAST2SMS_API_KEY", "")
+
