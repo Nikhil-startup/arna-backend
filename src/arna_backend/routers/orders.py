@@ -1,0 +1,125 @@
+from fastapi import APIRouter, HTTPException, Query, status
+import random
+import time
+from typing import List, Optional
+from arna_backend.database import supabase
+from arna_backend.schemas import OrderCreate, OrderStatusUpdate
+
+router = APIRouter(prefix="/api/orders", tags=["Orders & Fulfillment"])
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def place_order(payload: OrderCreate, user_id: Optional[str] = Query(None)):
+    """
+    Place a new customer order:
+    1. Validates or creates customer record in public.users to satisfy foreign key constraint.
+    2. Writes order to public.orders.
+    3. Writes relational line items to public.order_items linking order to products.
+    """
+    order_id = f"ord_{int(time.time() * 1000)}"
+    order_number = f"ARNA-{random.randint(100000, 999999)}"
+
+    # Foreign key satisfaction: Ensure user_id exists in public.users
+    valid_user_id = user_id
+    if valid_user_id:
+        user_check = supabase.from_("users").select("id").eq("id", valid_user_id).maybe_single().execute()
+        if not user_check.data:
+            # Auto-insert profile
+            supabase.from_("users").insert({
+                "id": valid_user_id,
+                "name": payload.shippingAddress.name,
+                "email": f"{valid_user_id}@customer.arna.co.in",
+                "phone": payload.shippingAddress.phone,
+                "role": "customer"
+            }).execute()
+    else:
+        # Create guest record
+        guest_id = f"usr_guest_{int(time.time() * 1000)}"
+        supabase.from_("users").insert({
+            "id": guest_id,
+            "name": payload.shippingAddress.name,
+            "email": f"{payload.shippingAddress.phone.replace(' ', '')}@guest.arna.co.in",
+            "phone": payload.shippingAddress.phone,
+            "role": "customer"
+        }).execute()
+        valid_user_id = guest_id
+
+    # 1. Insert order into public.orders
+    order_row = {
+        "id": order_id,
+        "order_number": order_number,
+        "user_id": valid_user_id,
+        "customer_name": payload.shippingAddress.name,
+        "customer_phone": payload.shippingAddress.phone,
+        "shipping_address": payload.shippingAddress.model_dump(),
+        "items": [item.model_dump() for item in payload.items],
+        "subtotal": payload.subtotal,
+        "discount": payload.discount,
+        "shipping_fee": payload.shippingFee,
+        "total_amount": payload.total,
+        "payment_method": payload.paymentMethod,
+        "payment_status": "pending_delivery" if payload.paymentMethod == "cod" else "paid",
+        "status": "confirmed"
+    }
+
+    order_res = supabase.from_("orders").insert(order_row).execute()
+
+    # 2. Insert relational order_items
+    order_items = []
+    for idx, item in enumerate(payload.items):
+        order_items.append({
+            "id": f"item_{order_id}_{idx}",
+            "order_id": order_id,
+            "product_id": item.product.id,
+            "product_title": item.product.title,
+            "quantity": item.quantity,
+            "selected_size": item.selectedSize,
+            "selected_color": item.selectedColor,
+            "unit_price": item.product.price
+        })
+
+    if order_items:
+        supabase.from_("order_items").insert(order_items).execute()
+
+    return {
+        "success": True,
+        "orderId": order_id,
+        "orderNumber": order_number,
+        "status": "confirmed",
+        "total": payload.total,
+        "customer": payload.shippingAddress.name,
+        "message": "Order placed successfully in Supabase cloud"
+    }
+
+@router.get("")
+async def get_orders(user_id: Optional[str] = Query(None)):
+    """
+    Get orders. If user_id provided, returns customer orders. If omitted, returns all orders (Admin).
+    """
+    query = supabase.from_("orders").select("*, order_items(*)")
+    if user_id:
+        query = query.eq("user_id", user_id)
+
+    res = query.order("created_at", desc=True).execute()
+    return res.data or []
+
+@router.get("/{order_id}")
+async def get_order_by_id(order_id: str):
+    """
+    Get detailed order with full joined items and product references.
+    """
+    res = supabase.from_("orders").select("*, order_items(*, products(*)), users(*)").eq("id", order_id).maybe_single().execute()
+    if not res.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    return res.data
+
+@router.patch("/{order_id}/status")
+async def update_order_status(order_id: str, payload: OrderStatusUpdate):
+    """
+    Update order packing status and notes (Merchant Admin Hub).
+    """
+    update_data = {"status": payload.status}
+    if payload.packingNotes is not None:
+        update_data["packing_notes"] = payload.packingNotes
+
+    res = supabase.from_("orders").update(update_data).eq("id", order_id).execute()
+    return {"success": True, "message": f"Order {order_id} status updated to {payload.status}"}
