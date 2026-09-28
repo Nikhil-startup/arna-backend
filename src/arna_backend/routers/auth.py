@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 import random
 import time
 from typing import Dict
+from arna_backend.services.notifier import send_email_otp, send_sms_otp
 from arna_backend.database import supabase
 from arna_backend.schemas import (
     SendOtpRequest, SendOtpResponse,
@@ -29,13 +30,17 @@ async def send_otp(payload: SendOtpRequest):
         "expires_at": time.time() + 600 # 10 minutes
     }
 
-    # For development & delivery: Return the OTP code and log it
-    # If custom SMTP or Twilio is connected in Supabase, this routes via provider
+    # Dispatch via Gmail SMTP or SMS gateway if configured
+    if "@" in clean_target:
+        delivery = send_email_otp(clean_target, otp_code)
+    else:
+        delivery = send_sms_otp(clean_target, otp_code)
+
     return SendOtpResponse(
         success=True,
         otp=otp_code,
         target=payload.target,
-        message=f"6-digit verification OTP generated for {payload.target}: {otp_code}"
+        message=delivery.get("message", f"6-digit verification code generated: {otp_code}")
     )
 
 @router.post("/verify-otp", response_model=VerifyOtpResponse)
@@ -263,11 +268,16 @@ async def forgot_password(payload: ForgotPasswordRequest):
         "expires_at": time.time() + 600
     }
 
+    if payload.method == "email" and target:
+        delivery = send_email_otp(target, otp_code)
+    else:
+        delivery = send_sms_otp(target, otp_code)
+
     return {
         "success": True,
         "otp": otp_code,
         "target": target,
-        "message": f"Password reset OTP sent to registered {payload.method}: {target}"
+        "message": delivery.get("message", f"Password reset OTP sent to registered {payload.method}: {target}")
     }
 
 @router.post("/reset-password")
