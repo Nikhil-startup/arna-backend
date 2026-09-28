@@ -23,7 +23,7 @@ async def send_otp(payload: SendOtpRequest):
     Generate and deliver a secure 6-digit OTP to the user's phone (+91...) or email/Gmail.
     """
     clean_target = payload.target.strip().lower()
-    otp_code = str(random.randint(100000, 999999))
+    otp_code = payload.custom_otp.strip() if payload.custom_otp else str(random.randint(100000, 999999))
     
     active_otps[clean_target] = {
         "otp": otp_code,

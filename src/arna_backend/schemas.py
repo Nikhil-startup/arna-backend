@@ -7,6 +7,7 @@ from typing import List, Optional, Any, Dict
 class SendOtpRequest(BaseModel):
     target: str = Field(..., description="Email address or phone number (+91...)")
     type: str = Field("email", description="'email' or 'phone'")
+    custom_otp: Optional[str] = Field(None, description="Optional pre-generated OTP code to deliver")
 
 class SendOtpResponse(BaseModel):
     success: bool
