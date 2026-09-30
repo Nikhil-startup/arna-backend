@@ -1,7 +1,7 @@
-from fastapi import APIRouter, HTTPException, status
 import random
 import time
-from typing import Dict
+import hashlib
+from typing import Dict, Optional
 from arna_backend.services.notifier import send_email_otp, send_sms_otp
 from arna_backend.database import supabase
 from arna_backend.schemas import (
@@ -12,6 +12,29 @@ from arna_backend.schemas import (
 )
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication & OTP"])
+
+# Cryptographic password hashing engine
+PASSWORD_SALT = "arna_luxury_atelier_2026"
+
+def hash_password(password: str) -> str:
+    """
+    Hashes password using salted SHA-256 in #hash_<hex> format.
+    Never stores plaintext passwords in the database.
+    """
+    raw = (PASSWORD_SALT + password).encode("utf-8")
+    h = hashlib.sha256(raw).hexdigest()
+    return f"#hash_{h}"
+
+def verify_password(password: str, stored_hash: Optional[str]) -> bool:
+    """
+    Verifies user password against the stored #hash or legacy plaintext.
+    """
+    if not stored_hash:
+        return False
+    if stored_hash.startswith("#hash_"):
+        return hash_password(password) == stored_hash
+    # Backward compatibility with legacy plaintext accounts
+    return stored_hash == password
 
 # In-memory OTP registry with 10-minute expiry
 # Key: target (clean email or phone), Value: {"otp": "...", "expires_at": timestamp}
@@ -120,7 +143,7 @@ async def register(payload: RegisterRequest):
         "name": payload.name,
         "email": clean_email,
         "phone": clean_phone,
-        "password_hash": payload.password,
+        "password_hash": hash_password(payload.password),
         "role": "customer"
     }
 
@@ -199,13 +222,21 @@ async def login(payload: LoginRequest):
             detail=f"No account found matching '{payload.identifier}'. Please sign up first."
         )
 
-    # Validate password
+    # Validate password using cryptographic hash verification
     stored_hash = user_data.get("password_hash")
-    if stored_hash and stored_hash != payload.password:
+    if stored_hash and not verify_password(payload.password, stored_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect password. Please verify your credentials."
         )
+
+    # Automatically upgrade legacy plaintext password to secure #hash format in database
+    if stored_hash and not stored_hash.startswith("#hash_"):
+        new_hash = hash_password(payload.password)
+        try:
+            supabase.from_("users").update({"password_hash": new_hash}).eq("id", user_data["id"]).execute()
+        except Exception:
+            pass
 
     user_resp = AuthUserResponse(
         id=user_data["id"],
@@ -329,7 +360,7 @@ async def reset_password(payload: ResetPasswordRequest):
         )
 
     # Update in database
-    update_res = supabase.from_("users").update({"password_hash": payload.new_password}).eq("id", user_match["id"]).execute()
+    update_res = supabase.from_("users").update({"password_hash": hash_password(payload.new_password)}).eq("id", user_match["id"]).execute()
     if stored:
         del active_otps[f"reset_{clean_target}"]
 
