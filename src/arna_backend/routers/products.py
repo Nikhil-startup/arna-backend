@@ -5,16 +5,29 @@ from arna_backend.schemas import ProductResponse, ProductCreate, ProductBase
 
 router = APIRouter(prefix="/api/products", tags=["Products Catalog"])
 
+import re
+
+def extract_sold_out_at(row: dict) -> Optional[str]:
+    if row.get("sold_out_at"):
+        return str(row["sold_out_at"])
+    desc = row.get("description") or ""
+    match = re.search(r"<!--sold_out_at:([^>]+)-->", desc)
+    if match:
+        return match.group(1)
+    return None
+
 @router.get("", response_model=List[ProductResponse])
 async def get_products(
     category: Optional[str] = Query(None, description="Filter by category (shirts, t-shirts, etc.)"),
     min_price: Optional[float] = Query(None, description="Minimum price filter"),
     max_price: Optional[float] = Query(None, description="Maximum price filter"),
     search: Optional[str] = Query(None, description="Search keyword in title or description"),
-    sort_by: Optional[str] = Query(None, description="price-low-high, price-high-low, newest, popular")
+    sort_by: Optional[str] = Query(None, description="price-low-high, price-high-low, newest, popular"),
+    limit: int = Query(50, ge=1, le=100, description="Page limit to avoid loading whole database"),
+    offset: int = Query(0, ge=0, description="Offset for pagination")
 ):
     """
-    Fetch all live clothing products from Supabase PostgreSQL with optional filters.
+    Fetch live clothing products from Supabase PostgreSQL with pagination and optional filters.
     """
     query = supabase.from_("products").select("*")
 
@@ -25,12 +38,17 @@ async def get_products(
     if max_price is not None:
         query = query.lte("price", max_price)
 
-    res = query.order("created_at", desc=True).execute()
+    # Avoid loading whole database at once
+    res = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
     items = res.data or []
 
     # Map database row to ProductResponse
     result = []
     for row in items:
+        stock = row.get("stock_count", 10)
+        sold_out_timestamp = extract_sold_out_at(row) or (row.get("created_at") if stock <= 0 else None)
+        clean_desc = re.sub(r"<!--sold_out_at:[^>]+-->", "", row.get("description", "")).strip()
+
         prod = ProductResponse(
             id=row["id"],
             title=row["title"],
@@ -40,12 +58,13 @@ async def get_products(
             price=float(row.get("price", 0)),
             originalPrice=float(row.get("original_price", row.get("price", 0))),
             discount=row.get("discount", 0),
-            stockCount=row.get("stock_count", 10),
-            inStock=(row.get("stock_count", 10) > 0),
+            stockCount=stock,
+            inStock=(stock > 0),
+            soldOutAt=sold_out_timestamp,
             sizes=row.get("sizes", ["S", "M", "L", "XL"]),
             colors=row.get("colors", [{"name": "Classic", "hex": "#111827"}]),
             images=row.get("images", []),
-            description=row.get("description", ""),
+            description=clean_desc,
             fabric=row.get("fabric", ""),
             washCare=row.get("wash_care", "Machine wash cold."),
             rating=float(row.get("rating", 4.8)),
@@ -143,7 +162,11 @@ async def create_product(product: ProductCreate):
 @router.delete("/{product_id}")
 async def delete_product(product_id: str):
     """
-    Delete a product from the catalog.
+    Delete a product from the catalog. Cascades any referencing order_items first.
     """
+    try:
+        supabase.from_("order_items").delete().eq("product_id", product_id).execute()
+    except Exception as e:
+        pass
     supabase.from_("products").delete().eq("id", product_id).execute()
     return {"success": True, "message": f"Product {product_id} deleted"}

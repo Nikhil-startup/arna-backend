@@ -96,6 +96,7 @@ class ProductBase(BaseModel):
     isNew: Optional[bool] = True
     isTrending: Optional[bool] = False
     isBestSeller: Optional[bool] = False
+    soldOutAt: Optional[str] = None
 
 class ProductCreate(ProductBase):
     pass
@@ -128,6 +129,8 @@ class OrderCreate(BaseModel):
     total: float
     shippingAddress: AddressModel
     paymentMethod: str = "upi"
+    idempotencyKey: Optional[str] = None
+    orderVerificationKey: Optional[str] = None
 
 class OrderStatusUpdate(BaseModel):
     status: str
