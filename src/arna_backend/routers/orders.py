@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query, status
 import random
 import time
-from typing import List, Optional
+from typing import List, Optional, Dict
 from arna_backend.database import supabase
 from arna_backend.schemas import OrderCreate, OrderStatusUpdate
 
@@ -10,21 +10,33 @@ router = APIRouter(prefix="/api/orders", tags=["Orders & Fulfillment"])
 import uuid
 import re
 
+# In-memory Idempotency Registry (Stores processed order results by idempotencyKey to prevent duplicate charges/writes)
+IDEMPOTENCY_CACHE: Dict[str, dict] = {}
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def place_order(payload: OrderCreate, user_id: Optional[str] = Query(None)):
     """
     Place a new customer order:
-    1. Idempotency check: returns existing order on duplicate submit.
+    1. Idempotency check: returns existing order on duplicate submit or network retry.
     2. Validates or creates customer record in public.users.
     3. Generates cryptographic verification key and records order.
     4. Decrements product inventory and tracks 5-hour sold_out_at rule.
     """
-    # 1. Idempotency protection against duplicate network submissions
+    # 1. Idempotency protection against duplicate network submissions & retries
     if payload.idempotencyKey:
+        clean_key = payload.idempotencyKey.strip()
+        # Fast path: in-memory cache lookup
+        if clean_key in IDEMPOTENCY_CACHE:
+            cached = IDEMPOTENCY_CACHE[clean_key].copy()
+            cached["replayed"] = True
+            cached["message"] = "Order already processed (idempotent response on retry)"
+            return cached
+
+        # Database lookup: check if already recorded
         try:
-            existing = supabase.from_("orders").select("*").eq("idempotency_key", payload.idempotencyKey).maybe_single().execute()
+            existing = supabase.from_("orders").select("*").eq("idempotency_key", clean_key).maybe_single().execute()
             if existing.data:
-                return {
+                cached_res = {
                     "success": True,
                     "orderId": existing.data["id"],
                     "orderNumber": existing.data["order_number"],
@@ -32,8 +44,12 @@ async def place_order(payload: OrderCreate, user_id: Optional[str] = Query(None)
                     "status": existing.data["status"],
                     "total": existing.data["total_amount"],
                     "customer": existing.data["customer_name"],
-                    "message": "Order already processed (idempotent response)"
+                    "idempotencyKey": clean_key,
+                    "replayed": True,
+                    "message": "Order already processed (idempotent response on retry)"
                 }
+                IDEMPOTENCY_CACHE[clean_key] = cached_res
+                return cached_res
         except Exception:
             pass
 
@@ -169,16 +185,20 @@ async def place_order(payload: OrderCreate, user_id: Optional[str] = Query(None)
             detail=f"Atomic order transaction rolled back due to error: {str(e)}"
         )
 
-    return {
+    res = {
         "success": True,
         "orderId": order_id,
         "orderNumber": order_number,
         "orderVerificationKey": verification_key,
+        "idempotencyKey": payload.idempotencyKey,
         "status": "confirmed",
         "total": payload.total,
         "customer": payload.shippingAddress.name,
         "message": "Order committed successfully with atomic inventory lock"
     }
+    if payload.idempotencyKey:
+        IDEMPOTENCY_CACHE[payload.idempotencyKey.strip()] = res
+    return res
 
 @router.get("")
 async def get_orders(
