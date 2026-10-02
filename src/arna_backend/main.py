@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
-from arna_backend.routers import auth, products, orders, coupons, analytics, system
+from arna_backend.routers import auth, products, orders, coupons, analytics, system, payments
 from arna_backend.config import HOST, PORT
 from arna_backend.services.sanitizer import SanitizedLogFilter
 from arna_backend.services.backup import backup_service
@@ -133,7 +133,7 @@ async def security_middleware(request: Request, call_next):
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(self)"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=*"
     response.headers["Content-Security-Policy"] = "upgrade-insecure-requests"
     return response
 
@@ -153,6 +153,7 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 app.include_router(auth.router)
 app.include_router(products.router)
 app.include_router(orders.router)
+app.include_router(payments.router)
 app.include_router(coupons.router)
 app.include_router(analytics.router)
 app.include_router(system.router)

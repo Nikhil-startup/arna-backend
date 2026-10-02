@@ -20,3 +20,9 @@ TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "")
 FAST2SMS_API_KEY = os.getenv("FAST2SMS_API_KEY", "")
 
+# Payment Gateway Configuration (Razorpay & Direct UPI QR)
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
+STORE_UPI_ID = os.getenv("STORE_UPI_ID", "arna@okhdfcbank")
+STORE_UPI_NAME = os.getenv("STORE_UPI_NAME", "ARNA Luxury Fashion")
+

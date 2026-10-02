@@ -121,10 +121,20 @@ async def place_order(payload: OrderCreate, user_id: Optional[str] = Query(None)
             order_row["order_verification_key"] = verification_key
             if payload.idempotencyKey:
                 order_row["idempotency_key"] = payload.idempotencyKey
+            if payload.paymentId:
+                order_row["payment_id"] = payload.paymentId
+            if payload.gatewayOrderId:
+                order_row["gateway_order_id"] = payload.gatewayOrderId
+            if payload.upiUtr:
+                order_row["notes"] = f"UPI UTR: {payload.upiUtr}"
             supabase.from_("orders").insert(order_row).execute()
         except Exception:
+            # Fallback to core columns if custom columns not migrated in Supabase
             order_row.pop("order_verification_key", None)
             order_row.pop("idempotency_key", None)
+            order_row.pop("payment_id", None)
+            order_row.pop("gateway_order_id", None)
+            order_row.pop("notes", None)
             supabase.from_("orders").insert(order_row).execute()
 
         # Step C: Insert relational order_items in single batch

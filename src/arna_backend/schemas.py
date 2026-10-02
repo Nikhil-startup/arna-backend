@@ -155,10 +155,55 @@ class OrderCreate(BaseModel):
     paymentMethod: str = "upi"
     idempotencyKey: Optional[str] = None
     orderVerificationKey: Optional[str] = None
+    paymentId: Optional[str] = None
+    gatewayOrderId: Optional[str] = None
+    upiUtr: Optional[str] = None
 
 class OrderStatusUpdate(BaseModel):
     status: str
     packingNotes: Optional[str] = None
+
+# ----------------------------------------------------
+# PAYMENT SCHEMAS (Razorpay & Direct UPI QR)
+# ----------------------------------------------------
+class PaymentConfigResponse(BaseModel):
+    razorpayEnabled: bool
+    razorpayKeyId: Optional[str] = None
+    isTestMode: bool
+    upiEnabled: bool
+    storeUpiId: str
+    storeUpiName: str
+    codEnabled: bool
+
+class RazorpayCreateOrderRequest(BaseModel):
+    amount: float
+    idempotencyKey: str
+    currency: Optional[str] = "INR"
+
+class RazorpayCreateOrderResponse(BaseModel):
+    success: bool
+    gatewayOrderId: str
+    amount: int  # in paise
+    currency: str
+    keyId: str
+    isTestMode: bool
+    replayed: Optional[bool] = False
+
+class RazorpayVerifyRequest(BaseModel):
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+    idempotencyKey: Optional[str] = None
+
+class RazorpayVerifyResponse(BaseModel):
+    success: bool
+    verified: bool
+    message: str
+
+class UpiVerifyRequest(BaseModel):
+    utrNumber: str
+    amount: float
+    idempotencyKey: Optional[str] = None
 
 # ----------------------------------------------------
 # COUPON SCHEMAS
