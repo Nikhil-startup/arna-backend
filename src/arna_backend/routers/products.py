@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from typing import List, Optional
 from arna_backend.database import supabase
 from arna_backend.schemas import ProductResponse, ProductCreate, ProductBase
@@ -18,6 +18,7 @@ def extract_sold_out_at(row: dict) -> Optional[str]:
 
 @router.get("", response_model=List[ProductResponse])
 async def get_products(
+    response: Response,
     category: Optional[str] = Query(None, description="Filter by category (shirts, t-shirts, etc.)"),
     min_price: Optional[float] = Query(None, description="Minimum price filter"),
     max_price: Optional[float] = Query(None, description="Maximum price filter"),
@@ -90,6 +91,7 @@ async def get_products(
     elif sort_by == "newest":
         result.sort(key=lambda x: 1 if x.isNew else 0, reverse=True)
 
+    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=300"
     return result
 
 @router.get("/{product_id}", response_model=ProductResponse)

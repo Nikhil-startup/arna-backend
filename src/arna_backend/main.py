@@ -4,6 +4,7 @@ import logging
 from collections import defaultdict
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from arna_backend.routers import auth, products, orders, coupons, analytics, system
 from arna_backend.config import HOST, PORT
@@ -144,6 +145,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Enable Gzip compression on all JSON responses > 500 bytes (mitigates uncompressed JSON)
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # Register all Routers
 app.include_router(auth.router)

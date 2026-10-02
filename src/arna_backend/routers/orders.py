@@ -41,82 +41,101 @@ async def place_order(payload: OrderCreate, user_id: Optional[str] = Query(None)
     order_number = f"ARNA-{random.randint(100000, 999999)}"
     verification_key = payload.orderVerificationKey or f"ARNA-VK-{uuid.uuid4().hex[:6].upper()}-{int(time.time())}"
 
-    # Foreign key satisfaction: Ensure user_id exists in public.users
-    valid_user_id = user_id
-    if valid_user_id:
-        user_check = supabase.from_("users").select("id").eq("id", valid_user_id).maybe_single().execute()
-        if not user_check.data:
+    # ----------------------------------------------------
+    # PHASE 1: PRE-COMMIT STOCK LOCK & VERIFICATION
+    # ----------------------------------------------------
+    # Validate stock sufficiency for ALL items before initiating any database writes
+    for item in payload.items:
+        prod_check = supabase.from_("products").select("id, title, stock_count").eq("id", item.product.id).maybe_single().execute()
+        if prod_check.data:
+            available = int(prod_check.data.get("stock_count") or 0)
+            if available < item.quantity:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Item '{prod_check.data.get('title')}' is sold out or has insufficient stock (Available: {available}, Requested: {item.quantity}). Order aborted without modifying database."
+                )
+
+    # ----------------------------------------------------
+    # PHASE 2: ATOMIC LOGICAL WRITE WITH COMPENSATING ROLLBACK
+    # ----------------------------------------------------
+    decremented_products = []
+    try:
+        # Step A: Foreign key satisfaction: Ensure user_id exists in public.users
+        valid_user_id = user_id
+        if valid_user_id:
+            user_check = supabase.from_("users").select("id").eq("id", valid_user_id).maybe_single().execute()
+            if not user_check.data:
+                supabase.from_("users").insert({
+                    "id": valid_user_id,
+                    "name": payload.shippingAddress.name,
+                    "email": f"{valid_user_id}@customer.arna.co.in",
+                    "phone": payload.shippingAddress.phone,
+                    "role": "customer"
+                }).execute()
+        else:
+            guest_id = f"usr_guest_{int(time.time() * 1000)}"
             supabase.from_("users").insert({
-                "id": valid_user_id,
+                "id": guest_id,
                 "name": payload.shippingAddress.name,
-                "email": f"{valid_user_id}@customer.arna.co.in",
+                "email": f"{payload.shippingAddress.phone.replace(' ', '')}@guest.arna.co.in",
                 "phone": payload.shippingAddress.phone,
                 "role": "customer"
             }).execute()
-    else:
-        guest_id = f"usr_guest_{int(time.time() * 1000)}"
-        supabase.from_("users").insert({
-            "id": guest_id,
-            "name": payload.shippingAddress.name,
-            "email": f"{payload.shippingAddress.phone.replace(' ', '')}@guest.arna.co.in",
-            "phone": payload.shippingAddress.phone,
-            "role": "customer"
-        }).execute()
-        valid_user_id = guest_id
+            valid_user_id = guest_id
 
-    # Insert order into public.orders
-    order_row = {
-        "id": order_id,
-        "order_number": order_number,
-        "user_id": valid_user_id,
-        "customer_name": payload.shippingAddress.name,
-        "customer_phone": payload.shippingAddress.phone,
-        "shipping_address": payload.shippingAddress.model_dump(),
-        "items": [item.model_dump() for item in payload.items],
-        "subtotal": payload.subtotal,
-        "discount": payload.discount,
-        "shipping_fee": payload.shippingFee,
-        "total_amount": payload.total,
-        "payment_method": payload.paymentMethod,
-        "payment_status": "pending_delivery" if payload.paymentMethod == "cod" else "paid",
-        "status": "confirmed"
-    }
+        # Step B: Insert order record into public.orders
+        order_row = {
+            "id": order_id,
+            "order_number": order_number,
+            "user_id": valid_user_id,
+            "customer_name": payload.shippingAddress.name,
+            "customer_phone": payload.shippingAddress.phone,
+            "shipping_address": payload.shippingAddress.model_dump(),
+            "items": [item.model_dump() for item in payload.items],
+            "subtotal": payload.subtotal,
+            "discount": payload.discount,
+            "shipping_fee": payload.shippingFee,
+            "total_amount": payload.total,
+            "payment_method": payload.paymentMethod,
+            "payment_status": "pending_delivery" if payload.paymentMethod == "cod" else "paid",
+            "status": "confirmed"
+        }
 
-    try:
-        order_row["order_verification_key"] = verification_key
-        if payload.idempotencyKey:
-            order_row["idempotency_key"] = payload.idempotencyKey
-        supabase.from_("orders").insert(order_row).execute()
-    except Exception:
-        # Fallback if extra columns not yet migrated
-        order_row.pop("order_verification_key", None)
-        order_row.pop("idempotency_key", None)
-        supabase.from_("orders").insert(order_row).execute()
-
-    # Insert relational order_items
-    order_items = []
-    for idx, item in enumerate(payload.items):
-        order_items.append({
-            "id": f"item_{order_id}_{idx}",
-            "order_id": order_id,
-            "product_id": item.product.id,
-            "product_title": item.product.title,
-            "quantity": item.quantity,
-            "selected_size": item.selectedSize,
-            "selected_color": item.selectedColor,
-            "unit_price": item.product.price
-        })
-
-    if order_items:
-        supabase.from_("order_items").insert(order_items).execute()
-
-    # Inventory decrement & 5-hour sold out tracking
-    for item in payload.items:
         try:
+            order_row["order_verification_key"] = verification_key
+            if payload.idempotencyKey:
+                order_row["idempotency_key"] = payload.idempotencyKey
+            supabase.from_("orders").insert(order_row).execute()
+        except Exception:
+            order_row.pop("order_verification_key", None)
+            order_row.pop("idempotency_key", None)
+            supabase.from_("orders").insert(order_row).execute()
+
+        # Step C: Insert relational order_items in single batch
+        order_items = []
+        for idx, item in enumerate(payload.items):
+            order_items.append({
+                "id": f"item_{order_id}_{idx}",
+                "order_id": order_id,
+                "product_id": item.product.id,
+                "product_title": item.product.title,
+                "quantity": item.quantity,
+                "selected_size": item.selectedSize,
+                "selected_color": item.selectedColor,
+                "unit_price": item.product.price
+            })
+
+        if order_items:
+            supabase.from_("order_items").insert(order_items).execute()
+
+        # Step D: Logical Inventory Decrement & 5-hour sold out tracking
+        for item in payload.items:
             prod_check = supabase.from_("products").select("stock_count, description").eq("id", item.product.id).maybe_single().execute()
             if prod_check.data:
                 curr_stock = int(prod_check.data.get("stock_count") or 0)
                 new_stock = max(0, curr_stock - item.quantity)
+                decremented_products.append({"id": item.product.id, "prev_stock": curr_stock})
+
                 upd_prod: dict = {"stock_count": new_stock}
                 if new_stock == 0:
                     now_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
@@ -124,13 +143,31 @@ async def place_order(payload: OrderCreate, user_id: Optional[str] = Query(None)
                     desc = prod_check.data.get("description") or ""
                     clean_desc = re.sub(r"<!--sold_out_at:[^>]+-->", "", desc).strip()
                     upd_prod["description"] = f"{clean_desc}\n<!--sold_out_at:{now_iso}-->"
+                
                 try:
                     supabase.from_("products").update(upd_prod).eq("id", item.product.id).execute()
                 except Exception:
                     upd_prod.pop("sold_out_at", None)
                     supabase.from_("products").update(upd_prod).eq("id", item.product.id).execute()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # COMPENSATING TRANSACTION: Revert partial writes on failure
+        for rec in decremented_products:
+            try:
+                supabase.from_("products").update({"stock_count": rec["prev_stock"]}).eq("id", rec["id"]).execute()
+            except Exception:
+                pass
+        try:
+            supabase.from_("orders").delete().eq("id", order_id).execute()
+            supabase.from_("order_items").delete().eq("order_id", order_id).execute()
         except Exception:
             pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Atomic order transaction rolled back due to error: {str(e)}"
+        )
 
     return {
         "success": True,
@@ -140,7 +177,7 @@ async def place_order(payload: OrderCreate, user_id: Optional[str] = Query(None)
         "status": "confirmed",
         "total": payload.total,
         "customer": payload.shippingAddress.name,
-        "message": "Order placed successfully in Supabase cloud"
+        "message": "Order committed successfully with atomic inventory lock"
     }
 
 @router.get("")
