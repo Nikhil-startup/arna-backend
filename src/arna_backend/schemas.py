@@ -179,6 +179,11 @@ class RazorpayCreateOrderRequest(BaseModel):
     amount: float
     idempotencyKey: str
     currency: Optional[str] = "INR"
+    customerName: Optional[str] = None
+    customerEmail: Optional[str] = None
+    customerPhone: Optional[str] = None
+    shippingAddress: Optional[Dict[str, Any]] = None
+    items: Optional[List[Dict[str, Any]]] = None
 
 class RazorpayCreateOrderResponse(BaseModel):
     success: bool
@@ -188,17 +193,41 @@ class RazorpayCreateOrderResponse(BaseModel):
     keyId: str
     isTestMode: bool
     replayed: Optional[bool] = False
+    checkoutOptions: Optional[Dict[str, Any]] = None
 
 class RazorpayVerifyRequest(BaseModel):
     razorpay_order_id: str
     razorpay_payment_id: str
     razorpay_signature: str
     idempotencyKey: Optional[str] = None
+    customerName: Optional[str] = None
+    customerPhone: Optional[str] = None
+    shippingAddress: Optional[Dict[str, Any]] = None
+    items: Optional[List[Dict[str, Any]]] = None
 
 class RazorpayVerifyResponse(BaseModel):
     success: bool
     verified: bool
+    orderId: Optional[str] = None
+    orderNumber: Optional[str] = None
+    orderVerificationKey: Optional[str] = None
+    paymentId: Optional[str] = None
     message: str
+
+class PaymentFailureRequest(BaseModel):
+    gatewayOrderId: Optional[str] = None
+    paymentId: Optional[str] = None
+    errorCode: Optional[str] = None
+    errorDescription: Optional[str] = None
+    errorSource: Optional[str] = None
+    errorStep: Optional[str] = None
+    errorReason: Optional[str] = None
+    idempotencyKey: Optional[str] = None
+
+class PaymentFailureResponse(BaseModel):
+    success: bool
+    message: str
+    gatewayOrderId: Optional[str] = None
 
 class UpiVerifyRequest(BaseModel):
     utrNumber: str
