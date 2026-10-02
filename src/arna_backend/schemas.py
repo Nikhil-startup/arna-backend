@@ -103,6 +103,28 @@ class ProductBase(BaseModel):
 class ProductCreate(ProductBase):
     pass
 
+class ProductUpdate(BaseModel):
+    title: Optional[str] = None
+    slug: Optional[str] = None
+    category: Optional[str] = None
+    fit: Optional[str] = None
+    price: Optional[float] = None
+    originalPrice: Optional[float] = None
+    discount: Optional[int] = None
+    stockCount: Optional[int] = None
+    sizes: Optional[List[str]] = None
+    colors: Optional[List[ProductColor]] = None
+    images: Optional[List[str]] = None
+    description: Optional[str] = None
+    fabric: Optional[str] = None
+    washCare: Optional[str] = None
+    rating: Optional[float] = None
+    reviewsCount: Optional[int] = None
+    isNew: Optional[bool] = None
+    isTrending: Optional[bool] = None
+    isBestSeller: Optional[bool] = None
+    soldOutAt: Optional[str] = None
+
 class ProductResponse(ProductBase):
     id: str
     inStock: bool = True

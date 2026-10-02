@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from typing import List, Optional
 from arna_backend.database import supabase
-from arna_backend.schemas import ProductResponse, ProductCreate, ProductBase
+from arna_backend.schemas import ProductResponse, ProductCreate, ProductUpdate, ProductBase
 
 router = APIRouter(prefix="/api/products", tags=["Products Catalog"])
 
@@ -160,6 +160,39 @@ async def create_product(product: ProductCreate):
 
     res = supabase.from_("products").insert(row).execute()
     return await get_product(prod_id)
+
+@router.patch("/{product_id}", response_model=ProductResponse)
+async def update_product(product_id: str, payload: ProductUpdate):
+    """
+    Update product details or inventory count (Merchant Admin).
+    """
+    upd = {}
+    if payload.title is not None: upd["title"] = payload.title
+    if payload.slug is not None: upd["slug"] = payload.slug
+    if payload.category is not None: upd["category"] = payload.category
+    if payload.fit is not None: upd["fit"] = payload.fit
+    if payload.price is not None: upd["price"] = payload.price
+    if payload.originalPrice is not None: upd["original_price"] = payload.originalPrice
+    if payload.discount is not None: upd["discount"] = payload.discount
+    if payload.stockCount is not None: upd["stock_count"] = payload.stockCount
+    if payload.sizes is not None: upd["sizes"] = payload.sizes
+    if payload.colors is not None: upd["colors"] = [c.model_dump() for c in payload.colors]
+    if payload.images is not None: upd["images"] = payload.images
+    if payload.description is not None: upd["description"] = payload.description
+    if payload.fabric is not None: upd["fabric"] = payload.fabric
+    if payload.washCare is not None: upd["wash_care"] = payload.washCare
+    if payload.rating is not None: upd["rating"] = payload.rating
+    if payload.reviewsCount is not None: upd["reviews_count"] = payload.reviewsCount
+    if payload.isNew is not None: upd["is_new"] = payload.isNew
+    if payload.isTrending is not None: upd["is_trending"] = payload.isTrending
+    if payload.isBestSeller is not None: upd["is_bestseller"] = payload.isBestSeller
+    if payload.soldOutAt is not None: upd["sold_out_at"] = payload.soldOutAt
+
+    if not upd:
+        return await get_product(product_id)
+
+    supabase.from_("products").update(upd).eq("id", product_id).execute()
+    return await get_product(product_id)
 
 @router.delete("/{product_id}")
 async def delete_product(product_id: str):

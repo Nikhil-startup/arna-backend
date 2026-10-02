@@ -93,3 +93,11 @@ async def toggle_coupon(coupon_id: str, is_active: bool):
     """
     supabase.from_("coupons").update({"is_active": is_active}).eq("id", coupon_id).execute()
     return {"success": True, "message": f"Coupon {coupon_id} status updated to {is_active}"}
+
+@router.delete("/{coupon_id}")
+async def delete_coupon(coupon_id: str):
+    """
+    Delete a discount coupon (Merchant Admin).
+    """
+    supabase.from_("coupons").delete().eq("id", coupon_id).execute()
+    return {"success": True, "message": f"Coupon {coupon_id} deleted"}
