@@ -1,7 +1,10 @@
 import random
 import time
 import hashlib
-from typing import Dict, Optional
+import hmac
+from collections import defaultdict
+from typing import Dict, Optional, List
+from fastapi import APIRouter, HTTPException, status, Request
 from arna_backend.services.notifier import send_email_otp, send_sms_otp
 from arna_backend.database import supabase
 from arna_backend.schemas import (
@@ -27,14 +30,20 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, stored_hash: Optional[str]) -> bool:
     """
-    Verifies user password against the stored #hash or legacy plaintext.
+    Verifies user password against the stored #hash or legacy plaintext using constant-time comparison.
     """
     if not stored_hash:
         return False
     if stored_hash.startswith("#hash_"):
-        return hash_password(password) == stored_hash
+        computed = hash_password(password)
+        return hmac.compare_digest(computed, stored_hash)
     # Backward compatibility with legacy plaintext accounts
-    return stored_hash == password
+    return hmac.compare_digest(stored_hash, password)
+
+# Anti-Brute-Force & Credential Stuffing Defense
+FAILED_LOGIN_ATTEMPTS: Dict[str, list] = defaultdict(list)
+LOCKOUT_THRESHOLD = 5
+LOCKOUT_DURATION_SECONDS = 900.0  # 15 minutes lockout
 
 # In-memory OTP registry with 10-minute expiry
 # Key: target (clean email or phone), Value: {"otp": "...", "expires_at": timestamp}
@@ -106,7 +115,14 @@ async def register(payload: RegisterRequest):
     """
     Create a new customer account in the Supabase PostgreSQL database.
     Stores name, username, email, phone, password hash, and delivery address.
+    Protected by honeypot anti-bot shield and salted cryptographic hashing.
     """
+    if payload.honeypot:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Automated bot exploitation detected."
+        )
+
     clean_email = payload.email.strip().lower()
     clean_phone = payload.phone.strip()
     clean_username = (payload.username or clean_email.split("@")[0]).strip().lower()
@@ -186,12 +202,37 @@ async def register(payload: RegisterRequest):
     )
 
 @router.post("/login", response_model=AuthResponse)
-async def login(payload: LoginRequest):
+async def login(payload: LoginRequest, request: Request):
     """
     Authenticate user by Email, Username, or Phone Number with Password.
+    Protected against brute-force exploitation, credential stuffing, and bot scrapers.
     """
+    # 1. Anti-bot honeypot check
+    if payload.honeypot:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Automated bot exploitation detected."
+        )
+
+    # 2. Client IP & Lockout Check
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        client_ip = forwarded.split(",")[0].strip()
+
     clean = payload.identifier.strip().lower()
-    
+    lockout_key = f"{client_ip}:{clean}"
+    now = time.time()
+
+    valid_attempts = [t for t in FAILED_LOGIN_ATTEMPTS[lockout_key] if now - t < LOCKOUT_DURATION_SECONDS]
+    FAILED_LOGIN_ATTEMPTS[lockout_key] = valid_attempts
+    if len(valid_attempts) >= LOCKOUT_THRESHOLD:
+        time_left = int(LOCKOUT_DURATION_SECONDS - (now - valid_attempts[0]))
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many failed login attempts. Account temporarily protected against exploitation. Please try again in {max(1, time_left)} seconds."
+        )
+
     # Query user by email, phone, or name from Supabase
     query = supabase.from_("users").select("*")
     if "@" in clean:
@@ -201,34 +242,50 @@ async def login(payload: LoginRequest):
     else:
         query = query.or_(f"email.eq.{clean},phone.eq.{clean}")
 
-    res = query.maybe_single().execute()
-    user_data = res.data
+    user_data = None
+    try:
+        res = query.maybe_single().execute()
+        user_data = res.data if res else None
+    except Exception:
+        user_data = None
 
     # Fallback search if username is stored or partial match
     if not user_data:
-        all_users_res = supabase.from_("users").select("*").limit(100).execute()
-        for u in (all_users_res.data or []):
-            if (
-                (u.get("email") and u["email"].lower() == clean) or
-                (u.get("phone") and clean in u["phone"]) or
-                (u.get("name") and u["name"].lower() == clean)
-            ):
-                user_data = u
-                break
+        try:
+            all_users_res = supabase.from_("users").select("*").limit(100).execute()
+            rows = all_users_res.data if all_users_res else []
+            for u in (rows or []):
+                if (
+                    (u.get("email") and u["email"].lower() == clean) or
+                    (u.get("phone") and clean in str(u["phone"])) or
+                    (u.get("name") and u["name"].lower() == clean)
+                ):
+                    user_data = u
+                    break
+        except Exception:
+            pass
 
     if not user_data:
+        FAILED_LOGIN_ATTEMPTS[lockout_key].append(now)
+        remaining_tries = max(0, LOCKOUT_THRESHOLD - len(FAILED_LOGIN_ATTEMPTS[lockout_key]))
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No account found matching '{payload.identifier}'. Please sign up first."
+            detail=f"No account found matching '{payload.identifier}'. Please sign up first. ({remaining_tries} attempts remaining)"
         )
 
-    # Validate password using cryptographic hash verification
+    # Validate password using cryptographic hash verification with timing attack protection
     stored_hash = user_data.get("password_hash")
     if stored_hash and not verify_password(payload.password, stored_hash):
+        FAILED_LOGIN_ATTEMPTS[lockout_key].append(now)
+        remaining_tries = max(0, LOCKOUT_THRESHOLD - len(FAILED_LOGIN_ATTEMPTS[lockout_key]))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect password. Please verify your credentials."
+            detail=f"Incorrect password. Please verify your credentials. ({remaining_tries} attempts remaining before temporary lockout)"
         )
+
+    # Success: Clear failed attempts for this user/ip
+    if lockout_key in FAILED_LOGIN_ATTEMPTS:
+        del FAILED_LOGIN_ATTEMPTS[lockout_key]
 
     # Automatically upgrade legacy plaintext password to secure #hash format in database
     if stored_hash and not stored_hash.startswith("#hash_"):

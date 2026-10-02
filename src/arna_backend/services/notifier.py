@@ -176,3 +176,47 @@ def send_sms_otp(to_phone: str, otp_code: str) -> dict:
         "channel": "simulation",
         "message": "SMS gateway not configured in .env. Code displayed on-screen for testing."
     }
+
+def send_email_notification(to_email: str, subject: str, html_content: str) -> dict:
+    """
+    Delivers transactional or security/billing alert email to the recipient.
+    Primary: Resend HTTPS API.
+    Fallback: Gmail SMTP.
+    """
+    if RESEND_API_KEY:
+        try:
+            headers = {
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "from": RESEND_FROM,
+                "to": [to_email],
+                "subject": subject,
+                "html": html_content
+            }
+            with httpx.Client(timeout=10.0) as client:
+                res = client.post("https://api.resend.com/emails", headers=headers, json=payload)
+                if res.status_code in (200, 201):
+                    return {"delivered": True, "channel": "resend", "message": f"Alert sent to {to_email}"}
+        except Exception as e:
+            print(f"Resend notification error: {e}")
+
+    if GMAIL_USER and GMAIL_APP_PASSWORD:
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = f"ARNA Luxury Fashion <{GMAIL_USER}>"
+            msg["To"] = to_email
+            msg.attach(MIMEText(html_content, "html"))
+
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=5.0) as server:
+                server.starttls()
+                server.login(GMAIL_USER, GMAIL_APP_PASSWORD.replace(" ", ""))
+                server.sendmail(GMAIL_USER, to_email, msg.as_string())
+            return {"delivered": True, "channel": "gmail_smtp", "message": f"Alert sent to {to_email}"}
+        except Exception as e:
+            print(f"Gmail notification error: {e}")
+
+    return {"delivered": False, "channel": "simulation", "message": f"Alert logged for {to_email}"}
+

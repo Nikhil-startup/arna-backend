@@ -11,3 +11,7 @@ wheels/
 
 # Environment files
 .env
+
+# Database backups & local state
+backups/*.json
+billing_config.json

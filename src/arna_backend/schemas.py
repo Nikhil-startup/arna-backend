@@ -40,10 +40,12 @@ class RegisterRequest(BaseModel):
     password: str
     username: Optional[str] = None
     address: Optional[AddressModel] = None
+    honeypot: Optional[str] = Field(None, description="Anti-bot invisible honeypot trap")
 
 class LoginRequest(BaseModel):
     identifier: str = Field(..., description="Email, username, or phone number")
     password: str
+    honeypot: Optional[str] = Field(None, description="Anti-bot invisible honeypot trap")
 
 class AuthUserResponse(BaseModel):
     id: str
