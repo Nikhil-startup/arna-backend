@@ -21,6 +21,7 @@ TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "")
 FAST2SMS_API_KEY = os.getenv("FAST2SMS_API_KEY", "")
 
 # Payment Gateway Configuration (Razorpay & Direct UPI QR)
+ENABLE_ONLINE_PAYMENTS = os.getenv("ENABLE_ONLINE_PAYMENTS", "false").lower() in ("true", "1", "yes")
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
 STORE_UPI_ID = os.getenv("STORE_UPI_ID", "arna@okhdfcbank")

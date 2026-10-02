@@ -6,7 +6,13 @@ import logging
 import re
 from typing import Dict, Optional
 from fastapi import APIRouter, HTTPException, status
-from arna_backend.config import RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, STORE_UPI_ID, STORE_UPI_NAME
+from arna_backend.config import (
+    ENABLE_ONLINE_PAYMENTS,
+    RAZORPAY_KEY_ID, 
+    RAZORPAY_KEY_SECRET, 
+    STORE_UPI_ID, 
+    STORE_UPI_NAME
+)
 from arna_backend.schemas import (
     PaymentConfigResponse,
     RazorpayCreateOrderRequest,
@@ -23,7 +29,9 @@ router = APIRouter(prefix="/api/payments", tags=["Payments & Gateways"])
 GATEWAY_ORDERS_CACHE: Dict[str, dict] = {}
 
 def has_active_razorpay_keys() -> bool:
-    """Check if valid non-empty Razorpay keys are provided."""
+    """Check if valid non-empty Razorpay keys are provided and online payments are enabled."""
+    if not ENABLE_ONLINE_PAYMENTS:
+        return False
     return bool(
         RAZORPAY_KEY_ID and 
         RAZORPAY_KEY_SECRET and 
@@ -39,10 +47,10 @@ async def get_payment_config():
     """
     is_active = has_active_razorpay_keys()
     return PaymentConfigResponse(
-        razorpayEnabled=True, # Available for checkout modal (live or safe sandbox)
-        razorpayKeyId=RAZORPAY_KEY_ID if is_active else "rzp_test_sandbox_mode",
+        razorpayEnabled=ENABLE_ONLINE_PAYMENTS and is_active,
+        razorpayKeyId=RAZORPAY_KEY_ID if is_active else "",
         isTestMode=not is_active or "test" in (RAZORPAY_KEY_ID or "").lower(),
-        upiEnabled=True,
+        upiEnabled=ENABLE_ONLINE_PAYMENTS,
         storeUpiId=STORE_UPI_ID or "arna@okhdfcbank",
         storeUpiName=STORE_UPI_NAME or "ARNA Luxury Fashion",
         codEnabled=True
@@ -54,6 +62,12 @@ async def create_razorpay_order(payload: RazorpayCreateOrderRequest):
     Creates an order on the payment gateway or reuses the existing order
     for the active checkout idempotency key to prevent double charging.
     """
+    if not ENABLE_ONLINE_PAYMENTS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Online payment gateway is temporarily disabled. Please complete checkout with Cash on Delivery."
+        )
+
     if not payload.idempotencyKey:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -177,6 +191,12 @@ async def verify_upi_utr(payload: UpiVerifyRequest):
     Validates a 12-digit UPI UTR / Transaction Reference Number submitted
     by customers using direct UPI QR transfer (Option 4).
     """
+    if not ENABLE_ONLINE_PAYMENTS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Direct UPI payments are temporarily disabled. Please use Cash on Delivery."
+        )
+
     clean_utr = payload.utrNumber.strip().replace(" ", "")
 
     # Standard bank UTR is 12 alphanumeric/numeric digits
