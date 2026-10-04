@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "en-US"
+early_access: false
+
+reviews:
+  profile: "assertive" # Rigorous code review mode
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+  tools:
+    ast-grep:
+      enabled: true
+    shellcheck:
+      enabled: true
+    python:
+      enabled: true
+
+  # Custom Review & Testing Directives
+  instructions: |
+    You are an expert Senior Code Reviewer and Lead QA Automation Engineer for ARNA (FastAPI + Supabase).
+    Review every code change with the following strict guidelines:
+
+    1. SECURITY & DATA INTEGRITY:
+       - Ensure no secrets, private API keys (e.g. RAZORPAY_KEY_SECRET, Supabase service roles) are logged or sent to the client.
+       - Verify that cryptographic operations (such as HMAC-SHA256 signature checks) use constant-time comparison (hmac.compare_digest).
+       - Ensure all incoming payloads are validated via Pydantic schemas.
+
+    2. AUTOMATED TESTING REQUIREMENTS:
+       - For every new or updated API endpoint, schema, or database query, evaluate test coverage.
+       - Automatically generate proposed pytest unit/integration test cases in the PR review comments covering:
+         a) Happy path (valid parameters, expected 200/201 responses).
+         b) Invalid or missing parameters (400 / 422 validation errors).
+         c) Edge cases (concurrent requests, duplicate idempotency keys, unauthorized requests).
+         d) Error paths & failure handling (database down, gateway timeouts).
+
+    3. ERROR HANDLING & IDEMPOTENCY:
+       - Verify that database writes and inventory adjustments are atomic and idempotent.
+       - Ensure proper status codes are returned (400, 404, 409, 500) with clear error details.
+
+chat:
+  auto_reply: true
