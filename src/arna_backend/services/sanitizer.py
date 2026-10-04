@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 # Regex patterns for sensitive data
 CARD_PATTERN = re.compile(r'\b(?:\d[ -]*?){13,19}\b')
-CVV_PATTERN = re.compile(r'\b(?:cvv|cvc|security_code)\s*[:=]\s*["\']?(\d{3,4})["\']?', re.IGNORECASE)
+CVV_PATTERN = re.compile(r'["\']?(?:cvv|cvc|security_code)["\']?\s*[:=]\s*["\']?(\d{3,4})["\']?', re.IGNORECASE)
 PASSWORD_PATTERN = re.compile(r'("(?:password|password_hash|new_password|passcode|token|access_token|secret)"\s*:\s*)"([^"]+)"', re.IGNORECASE)
 BEARER_PATTERN = re.compile(r'Bearer\s+[a-zA-Z0-9_\-\.]+', re.IGNORECASE)
 
